@@ -44,28 +44,45 @@ next e = maybe e (Next e) <$> optional expression
 -- all right, now automata
 
 -- definition is stupid? or not
-data State = State String [(Char, State)] deriving (Show, Eq)
+data State = State [(Char, State)] deriving (Show, Eq)
 
-finalState = State "final" []
-errorState = State "error" []
-emptyState = State "empty" []
+finalState = State  []
+errorState = State  []
+emptyState = State  []
 
 -- epsilon?
 
-buildAutomata' :: Expression -> ([Char], State)
-buildAutomata' (Term c) = ([c], emptyState)
+
+buildAutomata' :: Expression -> State
+buildAutomata' (Term c) = State [(c, emptyState)]
+-- ? => 'a' => s0
+-- ? => 'b' => s1
+-- ? => 'a' => s0 => 'b' => s1
 buildAutomata' (Next e1 e2) = let
-                                (c1, s1) = buildAutomata' e1
-                                (c2, s2) = buildAutomata' e2
-                              in (c1, State ">>" [(x, s2) | x <- c2]) -- also wrong?
+                                (State xs) = buildAutomata' e1
+                                s1 = buildAutomata' e2
+                                f (c, s) = (c, s1)
+                              in State ( f <$> xs) -- also wrong?
+
+--
+--  ? => 'a' => s0
+--  (? => 'a' => s1 => s2 => ..cycle => sn )*
+-- -----------------------
+--         => ('b' => y) <- next
+-- ? => (x => 'a' => x)
 buildAutomata' (Many e) = let
-                            (c, s) = buildAutomata' e
-                          in (c, State "*" [(x, s) | x <- c]) -- ids?, yeah wrong
+                             (State xs) = buildAutomata' e
+
+                          in  undefined -- ids?, yeah wrong
+
+-- ? => 'a' => s0      => a
+--                   ?       => s0
+-- ? => 'b' => s0      => b
 
 buildAutomata' (Sum e1 e2) = let
-                                (c1, s1) = buildAutomata' e1
-                                (c2, s2) = buildAutomata' e2
-                             in (c1++c2, State "|" ([(x, s1) | x <- c1] ++ [(x, s2) | x <- c2])) -- need epsilon? or eliminate
+                                (State xs) = buildAutomata' e1
+                                (State ys) = buildAutomata' e2
+                             in (State $ xs ++ ys)-- need epsilon? or eliminate
 
 addTransition :: State -> Char -> State -> State
 addTransition = undefined -- yeah, very funny, I can't modify prev state
