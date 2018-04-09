@@ -43,13 +43,32 @@ next e = maybe e (Next e) <$> optional expression
 
 -- all right, now automata
 
--- definition is stupid?
+-- definition is stupid? or not
 data State = State String [(Char, State)] deriving (Show, Eq)
 
 finalState = State "final" []
 errorState = State "error" []
+emptyState = State "empty" []
 
 -- epsilon?
+
+buildAutomata' :: Expression -> ([Char], State)
+buildAutomata' (Term c) = ([c], emptyState)
+buildAutomata' (Next e1 e2) = let
+                                (c1, s1) = buildAutomata' e1
+                                (c2, s2) = buildAutomata' e2
+                              in (c1, State ">>" [(x, s2) | x <- c2]) -- also wrong?
+buildAutomata' (Many e) = let
+                            (c, s) = buildAutomata' e
+                          in (c, State "*" [(x, s) | x <- c]) -- ids?, yeah wrong
+
+buildAutomata' (Sum e1 e2) = let
+                                (c1, s1) = buildAutomata' e1
+                                (c2, s2) = buildAutomata' e2
+                             in (c1++c2, State "|" ([(x, s1) | x <- c1] ++ [(x, s2) | x <- c2])) -- need epsilon? or eliminate
+
+addTransition :: State -> Char -> State -> State
+addTransition = undefined -- yeah, very funny, I can't modify prev state
 
 buildAutomata :: State -> Expression -> State
 buildAutomata s0 (Next e1 e2) = let
