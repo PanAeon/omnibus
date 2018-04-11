@@ -10,6 +10,7 @@ import Text.Megaparsec.Expr
 import qualified Text.Megaparsec.Char.Lexer as L
 import Control.Arrow(left)
 import Control.Applicative(Alternative, liftA2)
+import Data.List
 
 data Expression =
      Term Char
@@ -25,10 +26,14 @@ type Parser = Parsec Void String
 term :: Parser Expression
 term = Term <$> oneOf ['a'..'z']
 
+-- FIXME: priorities! aaaab|c should be parsed as (aaaab) | c
+-- FIXME: a*b should be (a*)b
 expression' = expression <* eof
 
 expression = (term <|> (between (char '(') (char ')') expression ))
-             >>= next >>= summ >>= manyP
+              >>= next >>= summ   >>= manyP
+
+-- expression'' ???
 
 manyP :: Expression -> Parser Expression
 manyP e = maybe e (const (Many e)) <$> optional (char '*')
@@ -44,62 +49,67 @@ next e = maybe e (Next e) <$> optional expression
 -- all right, now automata
 
 -- definition is stupid? or not
-data State = State [(Char, State)] deriving (Show, Eq)
+data State = State (Maybe State) [(Char, State)] deriving Show
 
-finalState = State  []
-errorState = State  []
-emptyState = State  []
+-- so automata, need to jump on next state,
+-- which means I need to normalize states in case of |
+-- so is (abc)*|(ab*)
+-- equal (ab)*c*?
 
--- epsilon?
-
-
-buildAutomata' :: Expression -> State
-buildAutomata' (Term c) = State [(c, emptyState)]
--- ? => 'a' => s0
--- ? => 'b' => s1
--- ? => 'a' => s0 => 'b' => s1
-buildAutomata' (Next e1 e2) = let
-                                (State xs) = buildAutomata' e1
-                                s1 = buildAutomata' e2
-                                f (c, s) = (c, s1)
-                              in State ( f <$> xs) -- also wrong?
-
+-- (abc)*|abd|abe
+-- (abf)* | (abc)* | (ab) (d|e)
 --
---  ? => 'a' => s0
---  (? => 'a' => s1 => s2 => ..cycle => sn )*
--- -----------------------
---         => ('b' => y) <- next
--- ? => (x => 'a' => x)
-buildAutomata' (Many e) = let
-                             (State xs) = buildAutomata' e
+-- -a-> * -b-> * -f->
+--             * -c->
+--             * -d->
+--             * -e->
 
-                          in  undefined -- ids?, yeah wrong
+finalState = State  Nothing []
+errorState = State  Nothing []
+emptyState = State  Nothing []
 
--- ? => 'a' => s0      => a
---                   ?       => s0
--- ? => 'b' => s0      => b
+-- FIXME: runAutomata' "a((abcd)*)a" "aa"
+stupdidParser x = maybe (error "can not parse") id  $ parseMaybe  expression' x
 
-buildAutomata' (Sum e1 e2) = let
-                                (State xs) = buildAutomata' e1
-                                (State ys) = buildAutomata' e2
-                             in (State $ xs ++ ys)-- need epsilon? or eliminate
+-- FIXME: runAutomata' "a((ac)*)a" "aa"
+-- problem:                |     ^
+--                         |_____| (* should backtrack on not matched, how?)
 
-addTransition :: State -> Char -> State -> State
-addTransition = undefined -- yeah, very funny, I can't modify prev state
-
-buildAutomata :: State -> Expression -> State
-buildAutomata s0 (Next e1 e2) = let
-                                  s2 = buildAutomata s0 e2
-                                in buildAutomata s2 e1
-buildAutomata s0 (Term c) = State ['(',c,')'] [(c, s0)]
-
-buildAutomata s0 (Many e) = undefined
-
-buildAutomata s0 (Sum e1 e2) = undefined -- merge e1 and e2, how?
+runAutomata :: State -> String -> Bool
+runAutomata (State _ []) _ = True
+runAutomata (State Nothing xs) "" = False
+runAutomata (State (Just es) _) "" =
+  let
+    drillDown (State _ []) = True
+    drillDown (State Nothing _) = False
+    drillDown (State (Just s) _) = drillDown s
+  in drillDown es
+runAutomata (State es xs) (y:ys) =
+  case find (\x -> fst x == y) xs of
+    (Just (c,s)) -> runAutomata s ys
+    Nothing -> maybe False (\es' -> runAutomata es' (y:ys)) es
 
 
+-- runAutomata' "(ab)|b" "abaabab" yep, matched first two
 
--- Sum Expression Expression deriving (Eq, Show)
+runAutomata' e s = runAutomata (buildAutomata' Nothing finalState (stupdidParser e)) s
+
+
+buildAutomata' :: Maybe State -> State -> Expression -> State
+buildAutomata' es fs (Term c) = State es [(c, fs)]
+buildAutomata' es fs (Next e1 e2) = let
+                                  fs' = buildAutomata' es fs e2
+                                  in buildAutomata' es fs' e1
+buildAutomata' es fs (Many e) = let
+                             fs' = buildAutomata' (Just fs) fs' e
+                             in  fs'
+
+buildAutomata' es fs (Sum e1 e2) = let
+                                (State _ xs) = buildAutomata' es fs e1
+                                (State _ ys) = buildAutomata' es fs e2
+                             in (State es $ xs ++ ys)-- need epsilon? or eliminate
+
+
 
 
 main :: IO ()
