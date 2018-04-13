@@ -31,9 +31,33 @@ term = Term <$> oneOf ['a'..'z']
 expression' = expression <* eof
 
 expression = (term <|> (between (char '(') (char ')') expression ))
-              >>= next >>= summ   >>= manyP
+             >>= manyP >>= next  >>= summ
 
--- expression'' ???
+{-
+
+-- FIXME: EBNF, top-down parsing and monadic parsing,
+-- for fuck sake, can't parse bloody ax|bc*|ed???
+expr = expr' (| expr')?
+expr' = term term?
+term  = [a-z]|expr
+
+-}
+
+
+expr = summ''
+
+expr' = (expr'' >>= next'' >>= manyP)
+expr'' = term <|> (between (char '(') (char ')') expr )
+
+summ'' :: Parser Expression
+summ'' = do
+             x  <- expr'
+             xs <- many ( char '|' *> expr')
+             pure $ foldl (Sum) x xs
+         --    maybe e (Sum e) <$> optional ( char '|' *> expr')
+
+next'':: Expression -> Parser Expression
+next'' e = maybe e (Next e) <$> optional expr'
 
 manyP :: Expression -> Parser Expression
 manyP e = maybe e (const (Many e)) <$> optional (char '*')
@@ -44,12 +68,40 @@ summ e = maybe e (Sum e) <$> optional ( char '|' *> expression)
 next:: Expression -> Parser Expression
 next e = maybe e (Next e) <$> optional expression
 
+
+expression'' = manyP' <|> expression'''
+
+expression''' = next' <|> expression''''
+
+expression'''' = summ' <|> expression'''''
+
+expression''''' = (term <|> (between (char '(') (char ')') expression'' ))
+
+
+
+manyP' :: Parser Expression
+manyP' = do
+           t <- expression''
+           maybe t (const (Many t)) <$> optional (char '*')
+
+summ' = do
+          e <- expression''
+          maybe e (Sum e) <$> optional ( char '|' *> expression'')
+
+next' = do
+         e <- expression''
+         maybe e (Next e) <$> optional expression''
+
+
+
+
 ------------------------------------------------------------------------------
 
 -- all right, now automata
 
 -- definition is stupid? or not
-data State = State (Maybe State) [(Char, State)] deriving Show
+data State =   State (Maybe State) [(Char, State)]
+             | FinalState deriving (Show)
 
 -- so automata, need to jump on next state,
 -- which means I need to normalize states in case of |
@@ -69,7 +121,7 @@ errorState = State  Nothing []
 emptyState = State  Nothing []
 
 -- FIXME: runAutomata' "a((abcd)*)a" "aa"
-stupdidParser x = maybe (error "can not parse") id  $ parseMaybe  expression' x
+stupdidParser x = maybe (error "can not parse") id  $ parseMaybe  (expr <* eof) x
 
 -- FIXME: runAutomata' "a((ac)*)a" "aa"
 -- problem:                |     ^
@@ -93,6 +145,29 @@ runAutomata (State es xs) (y:ys) =
 -- runAutomata' "(ab)|b" "abaabab" yep, matched first two
 
 runAutomata' e s = runAutomata (buildAutomata' Nothing finalState (stupdidParser e)) s
+
+
+buildAutomata :: Maybe State -> State -> Expression -> State
+buildAutomata es fs (Term c)  = State es [(c, fs)]
+buildAutomata es fs (Next e1 e2) = let
+                                  fs' = buildAutomata' es fs e2
+                                  in buildAutomata' es fs' e1
+
+buildAutomata es fs (Sum e1 e2) = let
+                                -- need to merge two graphs xs && ys
+                                (State _ xs) = buildAutomata' es fs e1
+                                (State _ ys) = buildAutomata' es fs e2
+                             in (State es $ xs ++ ys)
+
+merge :: State -> State -> State
+merge FinalState FinalState = FinalState
+merge (State _ xs) FinalState = (State (Just FinalState) xs)
+merge FinalState (State _ ys) = (State (Just FinalState) ys)
+-- merge (State _ ((c1,s1):xs)) (State _ ((c2,s2):ys)) 
+          -- | c1 == c2 = State Nothing (merge s1 s2):
+merge (State _ xs) (State _ ys) = undefined
+  where
+    zs = intersectBy (\ x y -> fst x == fst y) xs ys
 
 
 buildAutomata' :: Maybe State -> State -> Expression -> State
