@@ -26,12 +26,7 @@ type Parser = Parsec Void String
 term :: Parser Expression
 term = Term <$> oneOf ['a'..'z']
 
--- FIXME: priorities! aaaab|c should be parsed as (aaaab) | c
--- FIXME: a*b should be (a*)b
-expression' = expression <* eof
 
-expression = (term <|> (between (char '(') (char ')') expression ))
-             >>= manyP >>= next  >>= summ
 
 {-
 
@@ -60,13 +55,13 @@ next'':: Expression -> Parser Expression
 next'' e = maybe e (Next e) <$> optional expr'
 
 manyP :: Expression -> Parser Expression
-manyP e = maybe e (const (Many e)) <$> optional (char '*')
+manyP e = (maybe e (const (Many e)) <$> optional (char '*')) >>= next''
 
-summ :: Expression -> Parser Expression
-summ e = maybe e (Sum e) <$> optional ( char '|' *> expression)
+-- summ :: Expression -> Parser Expression
+-- summ e = maybe e (Sum e) <$> optional ( char '|' *> expression)
 
-next:: Expression -> Parser Expression
-next e = maybe e (Next e) <$> optional expression
+-- next:: Expression -> Parser Expression
+-- next e = maybe e (Next e) <$> optional expression
 
 
 expression'' = manyP' <|> expression'''
@@ -103,101 +98,82 @@ stupdidParser x = maybe (error "can not parse") id  $ parseMaybe  (expr <* eof) 
 
 data Ref = Ref Char State
          -- | RecRef Char State
-         -- | BckRef Char State
-         | EpsRef State
+        | BckRef Char State
+        -- | EpsRef State
 
-
+-- final, refs
 data State =   State Bool [Ref]
 
 instance Show State where
   show = printAutomata
 
 printAutomata :: State -> String
-printAutomata (State _ []) = "▣"
-printAutomata (State r xs) =
-  if r
-  then "{" ++ (concat . intersperse " ,") (printRef <$> xs) ++ "}"
-  else "[" ++ (concat . intersperse " ,") (printRef <$> xs) ++ "]"
+-- printAutomata (State _ []) = "▣"
+printAutomata (State isFinal xs) =
+  (if isFinal then "▣" else "") ++
+   "[" ++ (concat . intersperse " ,") (printRef <$> xs) ++ "]"
 
 printRef :: Ref -> String
-printRef (Ref c (State True _)) = '\'':c:'\'':"??<--"
+-- printRef (Ref c (State True _)) = '\'':c:'\'':"??<--"
 printRef (Ref c s) = '\'':c:'\'':"->" ++ (printAutomata s)
 -- printRef (RecRef c s) = '\'':c:'\'':"➡" ++ (printAutomata s)
--- printRef (BckRef c _) = '\'':c:'\'':"⬅" ++ "??"
-printRef (EpsRef s) = "⟿" ++ (printAutomata s)
+printRef (BckRef c _) = '\'':c:'\'':"⬅" ++ "??"
+-- printRef (EpsRef s) = "⟿" ++ (printAutomata s)
 -- printRef (BckEpsRef s) = "⬅⟿" ++ "??"
 
 -- Careful with this one: buildFromString "(ab|ac|ae|af|a)a"
-buildFromString s = buildAutomata (State False []) (stupdidParser s)
+buildFromString s = buildAutomata (State True [], False) (stupdidParser s)
 
 -- can switch first param for ref..
-buildAutomata :: State -> Expression -> State
-buildAutomata fs (Term c)  = State False [Ref c fs]
+buildAutomata :: (State,Bool) -> Expression -> State
+buildAutomata (fs, isBck) (Term c)  = State False [if isBck then BckRef c fs else Ref c fs]
 buildAutomata fs (Next e1 e2) = let
                                   fs' = buildAutomata fs e2
-                                  in buildAutomata fs' e1
+                                  in buildAutomata (fs',False) e1
 
 buildAutomata fs (Sum e1 e2) = let
                                  s1 = buildAutomata fs e1
                                  s2 = buildAutomata fs e2
                                in mergeStates s1 s2
-buildAutomata fs (Many e)    = let
-                                 (State xs) = buildAutomata fs' e
-                                 -- xs' = markAsRec <$> xs -- here epsilon is an error
-                                 fs' = undefined-- fmap all next states to BckRef
-                              in  fs'
+buildAutomata (fs@(State isFinal _), bs) (Many e)    = let -- bs here is lost, which is much worse :(
+                                 (State _ xs) = buildAutomata (fs', True) e
+                                 fs' = mergeStates  (State isFinal xs) fs
+                              in fs'--- wow this is eureka moment, fuck
 -- for now only ref && epsref
 mergeStates :: State -> State -> State
-mergeStates (State []) (State []) = State []
-mergeStates (State xs) (State []) = State $ xs ++ [EpsRef (State [])]
-mergeStates (State []) (State ys) = State $ [EpsRef (State [])] ++ ys
-mergeStates (State xs) (State ys) = State $ xs'' ++ common ++ ys'' ++ epsilons
+mergeStates (State _ []) (State _ []) = State True []
+mergeStates (State _ xs) (State _ []) = State True xs  -- TODO: maybe unnecessary? how?
+mergeStates (State _ []) (State r ys) = State True ys
+mergeStates (State fs1 xs) (State fs2 ys) = State (fs1 || fs2) $ xs'' ++ bxs ++ common ++ ys'' ++ bys
   where
-     isEpsilon (EpsRef _) = True
-     isEpsilon _          = False
-     epsilons = take 1 (filter isEpsilon (xs ++ ys))
-     xs' = filter (not . isEpsilon) xs
-     ys' = filter (not . isEpsilon) ys
+     isBck (BckRef _ _) = True
+     isBck _          = False
+     bxs = filter isBck xs
+     bys = filter isBck ys
+     xs' = filter (not . isBck) xs
+     ys' = filter (not . isBck) ys
      sameChar (Ref c1 _) (Ref c2 _) = c1 == c2
      common = [Ref c1 (mergeStates s1 s2) | (Ref c1 s1) <- xs', (Ref c2 s2) <- ys', c1 == c2 ]
      xs'' = deleteFirstsBy sameChar xs' ys' -- knowing that chars are unique
      ys'' = deleteFirstsBy sameChar ys' xs'
 
 
---
---
--- buildAutomata' :: Maybe State -> State -> Expression -> State
--- buildAutomata' es fs (Term c) = State es [(c, fs)]
--- buildAutomata' es fs (Next e1 e2) = let
---                                   fs' = buildAutomata' es fs e2
---                                   in buildAutomata' es fs' e1
--- buildAutomata' es fs (Many e) = let
---                              fs' = buildAutomata' (Just fs) fs' e
---                              in  fs'
---
--- buildAutomata' es fs (Sum e1 e2) = let
---                                 (State _ xs) = buildAutomata' es fs e1
---                                 (State _ ys) = buildAutomata' es fs e2
---                              in (State es $ xs ++ ys)-- need epsilon? or eliminate
-
--- runAutomata :: State -> String -> Bool
--- runAutomata (State _ []) _ = True
--- runAutomata (State Nothing xs) "" = False
--- runAutomata (State (Just es) _) "" =
---   let
---     drillDown (State _ []) = True
---     drillDown (State Nothing _) = False
---     drillDown (State (Just s) _) = drillDown s
---   in drillDown es
--- runAutomata (State es xs) (y:ys) =
---   case find (\x -> fst x == y) xs of
---     (Just (c,s)) -> runAutomata s ys
---     Nothing -> maybe False (\es' -> runAutomata es' (y:ys)) es
+runAutomata :: State -> String -> (Bool, String)  -- let it return unmatched
+runAutomata (State True _) "" = (True, "")
+runAutomata (State False _) "" = (False, "")
+runAutomata (State isF refs) (y:ys) =
+     case find (\x -> getC x == y) refs of
+       (Just (Ref _ s)) -> runAutomata s ys
+       (Just (BckRef _ s)) -> runAutomata s ys
+       Nothing -> (False, y:ys)
+   where
+     getC (Ref c _) = c
+     getC (BckRef c _) = c
 
 
--- runAutomata' "(ab)|b" "abaabab" yep, matched first two
+runS e s = runAutomata (buildAutomata (State True [], False) (stupdidParser e)) s
 
--- runAutomata' e s = runAutomata (buildAutomata' Nothing finalState (stupdidParser e)) s
+
 
 main :: IO ()
 main = someFunc
