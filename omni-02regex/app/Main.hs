@@ -93,11 +93,15 @@ buildAutomata fs (Sum e1 e2) = let
                                  s1 = buildAutomata fs e1
                                  s2 = buildAutomata fs e2
                                in mergeStates s1 s2
+
 buildAutomata (fs@(State isFinal _), bs) (Many e)    = let -- bs here is lost, which is much worse :(
                                  (State _ xs) = buildAutomata (fs', True) e
                                  fs' = mergeStates  (State isFinal xs) fs
-                              in fs'--- wow this is eureka moment, fuck
+                              in fs'
+
+                                     --- wow this is eureka moment, fuck
                                     -- FIXME: runS "(a*)*" "cabc", unit tests
+                                    --        runS "(a|b*)*" "abc"
 -- for now only ref && epsref
 mergeStates :: State -> State -> State
 mergeStates (State _ []) (State _ []) = State True []
