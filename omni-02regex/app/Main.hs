@@ -19,14 +19,10 @@ data Expression =
    | Sum Expression Expression deriving (Eq, Show)
 
 ------------------------------------------------------------------------------
--- FIXME: unit tests, as usual
--- parsing
 type Parser = Parsec Void String
 
 term :: Parser Expression
 term = Term <$> oneOf ['a'..'z']
-
-
 
 {-
 
@@ -49,43 +45,12 @@ summ'' = do
              x  <- expr'
              xs <- many ( char '|' *> expr')
              pure $ foldl (Sum) x xs
-         --    maybe e (Sum e) <$> optional ( char '|' *> expr')
 
 next'':: Expression -> Parser Expression
 next'' e = maybe e (Next e) <$> optional expr'
 
 manyP :: Expression -> Parser Expression
 manyP e = (maybe e (const (Many e)) <$> optional (char '*')) >>= next''
-
--- summ :: Expression -> Parser Expression
--- summ e = maybe e (Sum e) <$> optional ( char '|' *> expression)
-
--- next:: Expression -> Parser Expression
--- next e = maybe e (Next e) <$> optional expression
-
-
-expression'' = manyP' <|> expression'''
-
-expression''' = next' <|> expression''''
-
-expression'''' = summ' <|> expression'''''
-
-expression''''' = (term <|> (between (char '(') (char ')') expression'' ))
-
-
-
-manyP' :: Parser Expression
-manyP' = do
-           t <- expression''
-           maybe t (const (Many t)) <$> optional (char '*')
-
-summ' = do
-          e <- expression''
-          maybe e (Sum e) <$> optional ( char '|' *> expression'')
-
-next' = do
-         e <- expression''
-         maybe e (Next e) <$> optional expression''
 
 
 
@@ -97,9 +62,7 @@ stupdidParser x = maybe (error "can not parse") id  $ parseMaybe  (expr <* eof) 
 
 
 data Ref = Ref Char State
-         -- | RecRef Char State
         | BckRef Char State
-        -- | EpsRef State
 
 -- final, refs
 data State =   State Bool [Ref]
@@ -108,18 +71,13 @@ instance Show State where
   show = printAutomata
 
 printAutomata :: State -> String
--- printAutomata (State _ []) = "▣"
 printAutomata (State isFinal xs) =
   (if isFinal then "▣" else "") ++
    "[" ++ (concat . intersperse " ,") (printRef <$> xs) ++ "]"
 
 printRef :: Ref -> String
--- printRef (Ref c (State True _)) = '\'':c:'\'':"??<--"
 printRef (Ref c s) = '\'':c:'\'':"->" ++ (printAutomata s)
--- printRef (RecRef c s) = '\'':c:'\'':"➡" ++ (printAutomata s)
 printRef (BckRef c _) = '\'':c:'\'':"⬅" ++ "??"
--- printRef (EpsRef s) = "⟿" ++ (printAutomata s)
--- printRef (BckEpsRef s) = "⬅⟿" ++ "??"
 
 -- Careful with this one: buildFromString "(ab|ac|ae|af|a)a"
 buildFromString s = buildAutomata (State True [], False) (stupdidParser s)
@@ -139,6 +97,7 @@ buildAutomata (fs@(State isFinal _), bs) (Many e)    = let -- bs here is lost, w
                                  (State _ xs) = buildAutomata (fs', True) e
                                  fs' = mergeStates  (State isFinal xs) fs
                               in fs'--- wow this is eureka moment, fuck
+                                    -- FIXME: runS "(a*)*" "cabc", unit tests
 -- for now only ref && epsref
 mergeStates :: State -> State -> State
 mergeStates (State _ []) (State _ []) = State True []
