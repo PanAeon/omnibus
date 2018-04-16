@@ -24,7 +24,7 @@ dependencies:
 - mtl
 - transformers
 - random
-- containers 
+- containers
 - unordered-containers
 - monad-loops
 - pqueue
@@ -41,10 +41,12 @@ dependencies:
 library:
   source-dirs: src
 
+
 executables:
   omni-02regex-exe:
     main:                Main.hs
     source-dirs:         app
+
     ghc-options:
     - -threaded
     - -rtsopts

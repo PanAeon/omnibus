@@ -11,6 +11,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Control.Arrow(left)
 import Control.Applicative(Alternative, liftA2)
 import Data.List
+import Debug.Trace
 
 data Expression =
      Term Char
@@ -28,6 +29,7 @@ term = Term <$> oneOf ['a'..'z']
 
 -- FIXME: EBNF, top-down parsing and monadic parsing,
 -- for fuck sake, can't parse bloody ax|bc*|ed???
+-- Answer: because you are rushing.
 expr = expr' (| expr')?
 expr' = term term?
 term  = [a-z]|expr
@@ -79,10 +81,10 @@ printRef :: Ref -> String
 printRef (Ref c s) = '\'':c:'\'':"->" ++ (printAutomata s)
 printRef (BckRef c _) = '\'':c:'\'':"⬅" ++ "??"
 
--- Careful with this one: buildFromString "(ab|ac|ae|af|a)a"
+
 buildFromString s = buildAutomata (State True [], False) (stupdidParser s)
 
--- can switch first param for ref..
+
 buildAutomata :: (State,Bool) -> Expression -> State
 buildAutomata (fs, isBck) (Term c)  = State False [if isBck then BckRef c fs else Ref c fs]
 buildAutomata fs (Next e1 e2) = let
@@ -94,18 +96,23 @@ buildAutomata fs (Sum e1 e2) = let
                                  s2 = buildAutomata fs e2
                                in mergeStates s1 s2
 
-buildAutomata (fs@(State isFinal _), bs) (Many e)    = let -- bs here is lost, which is much worse :(
-                                 (State _ xs) = buildAutomata (fs', True) e
-                                 fs' = mergeStates  (State isFinal xs) fs
-                              in fs'
 
-                                     --- wow this is eureka moment, fuck
-                                    -- FIXME: runS "(a*)*" "cabc", unit tests
-                                    --        runS "(a|b*)*" "abc"
+buildAutomata (fs, bs) (Many e)    =
+                              let -- bs here is lost, which is much worse :(
+                                 (State _ xs) = buildAutomata (fs', True) e
+                                 isFinal (State x _) = x
+                                 final = isFinal fs
+                                 fs' =  mergeStates'  (State final xs) fs
+                              in if bs
+                                 then buildAutomata (fs, True) e
+                                 else fs'
+
+                                     --- wow this was eureka moment, fuck
+mergeStates' a b =  (mergeStates a b)
 -- for now only ref && epsref
 mergeStates :: State -> State -> State
 mergeStates (State _ []) (State _ []) = State True []
-mergeStates (State _ xs) (State _ []) = State True xs  -- TODO: maybe unnecessary? how?
+mergeStates (State _ xs) (State _ []) = State True xs
 mergeStates (State _ []) (State r ys) = State True ys
 mergeStates (State fs1 xs) (State fs2 ys) = State (fs1 || fs2) $ xs'' ++ bxs ++ common ++ ys'' ++ bys
   where
@@ -116,12 +123,12 @@ mergeStates (State fs1 xs) (State fs2 ys) = State (fs1 || fs2) $ xs'' ++ bxs ++ 
      xs' = filter (not . isBck) xs
      ys' = filter (not . isBck) ys
      sameChar (Ref c1 _) (Ref c2 _) = c1 == c2
-     common = [Ref c1 (mergeStates s1 s2) | (Ref c1 s1) <- xs', (Ref c2 s2) <- ys', c1 == c2 ]
+     common = [Ref c1 (mergeStates' s1 s2) | (Ref c1 s1) <- xs', (Ref c2 s2) <- ys', c1 == c2 ]
      xs'' = deleteFirstsBy sameChar xs' ys' -- knowing that chars are unique
      ys'' = deleteFirstsBy sameChar ys' xs'
 
 
-runAutomata :: State -> String -> (Bool, String)  -- let it return unmatched
+runAutomata :: State -> String -> (Bool, String)
 runAutomata (State True _) "" = (True, "")
 runAutomata (State False _) "" = (False, "")
 runAutomata (State isF refs) (y:ys) =
@@ -136,7 +143,46 @@ runAutomata (State isF refs) (y:ys) =
 
 runS e s = runAutomata (buildAutomata (State True [], False) (stupdidParser e)) s
 
+-- all right, could test here for now
+
+testdata =
+  [ ("(ab)", "ab", (True, ""))
+  , ("a|b", "a", (True, ""))
+  , ("a|b", "b", (True, ""))
+  , ("ab|a", "a", (True, ""))
+  , ("ab|a", "ab", (True, ""))
+  , ("a|b", "c", (False, "c"))
+  , ("(ab)*ac", "ac", (True, ""))
+  , ("(ab)*ac", "", (False, ""))
+  , ("(a*)*", "", (True, ""))
+  , ("(ab|ac|ae|af|a)a", "aa", (True, ""))
+  , ("(ab|ac|ae|af|a)a", "afa", (True, ""))
+  , ("(a*)*", "aaaaaaa", (True, ""))
+  , ("(a*|b*)", "aaaaaaaaaa", (True, ""))
+  , ("(a*|b*)", "bbbbbb", (True, ""))
+  , ("(a|b)*" , "abbbbaaaababbb", (True, ""))
+  , ("(ab(ac)*ae)*", "abacacacae", (True, ""))
+  , ("(ab(ac)*ae)*", "", (True, ""))
+  , ("(ab(ac)*ae)*", "abae", (True, ""))
+  , ("(ab(ac)*ae)*", "abadadf", (False, "dadf"))
+  , ("(a|b*)*", "abbbbbaaabaaaba", (True, ""))
+  , ("(a*|b*)*", "abaaaabbbaabb", (True, "")) -- yeah, :'(
+  , ("(a*d|b*e)*", "aaadbbbeaaadbeadde", (True, ""))
+  , ("((a*)(xb*)c)*", "aaaaxbbbbcaaxbc", (True, ""))
+  ]
+
+-- FIXME: normal tests
+runTests = sequenceA [ runTest regex input output | (regex, input, output) <- testdata]
+  where
+    runTest regex input output =
+      let
+        out = runS regex input
+      in if out == output
+         then putStrLn "OK"
+         else putStrLn $ "FAIL - " ++ regex ++ " - " ++ input ++ "\n" ++
+              "expected: " ++ (show output) ++ "\n" ++
+              "got:      " ++ (show out)
 
 
 main :: IO ()
-main = someFunc
+main = putStrLn (show $ buildFromString "(a*)*")
