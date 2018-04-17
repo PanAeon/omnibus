@@ -64,3 +64,5 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - omni-02regex
+    - hspec
+    - QuickCheck

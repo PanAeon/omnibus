@@ -1,2 +1,2 @@
-main :: IO ()
-main = putStrLn "Test suite not yet implemented"
+-- enable automatic test discovery
+{-# OPTIONS_GHC -F -pgmF hspec-discover #-}
