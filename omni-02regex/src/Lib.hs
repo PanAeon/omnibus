@@ -11,6 +11,7 @@ import Control.Arrow(left)
 import Control.Applicative(Alternative, liftA2)
 import Data.List
 import Debug.Trace
+import qualified Control.Monad.State as ST
 
 data Expression =
      Term Char
